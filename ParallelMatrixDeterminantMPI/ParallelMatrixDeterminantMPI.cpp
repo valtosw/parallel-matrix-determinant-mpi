@@ -1,24 +1,33 @@
-#include <mpi.h>
+//#include <mpi.h>
+#include "Matrix.cpp"
+
 #include <iostream>
 
-int main(int argc, char** argv)
+
+int main()
 {
-    MPI_Init(&argc, &argv);
+    Matrix matrix(3, 3);
 
-    int rank;
-    int size;
+    matrix(0, 0) = 1;
+    matrix(0, 1) = 2;
+    matrix(0, 2) = 3;
 
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    matrix(1, 0) = 0;
+    matrix(1, 1) = 4;
+    matrix(1, 2) = 5;
 
-    std::cout
-        << "Hello from process "
-        << rank
-        << " of "
-        << size
+    matrix(2, 0) = 1;
+    matrix(2, 1) = 0;
+    matrix(2, 2) = 6;
+
+    std::cout << "Matrix:" << std::endl;
+    matrix.Print();
+
+    double determinant = matrix.Determinant();
+
+    std::cout << "\nDeterminant: "
+        << determinant
         << std::endl;
-
-    MPI_Finalize();
 
     return 0;
 }
