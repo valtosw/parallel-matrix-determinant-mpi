@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="ParallelMatrixDeterminantMPI/ParallelMatrixDeterminantMPI.vcxproj" />
+  <Project Path="ParallelMatrixDeterminantMPI/ParallelMatrixDeterminantMPI.vcxproj" Id="e8507f27-7198-4ed0-a5c0-e918664db33a" />
 </Solution>
