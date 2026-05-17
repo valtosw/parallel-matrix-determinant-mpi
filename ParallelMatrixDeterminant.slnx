@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="ParallelMatrixDeterminant/ParallelMatrixDeterminant.vcxproj" Id="e8507f27-7198-4ed0-a5c0-e918664db33a" />
+</Solution>
