@@ -1,4 +1,5 @@
 #include <mpi.h>
+#include <omp.h>
 #include "Matrix.h"
 #include <iostream>
 #include <vector>
@@ -6,30 +7,27 @@
 #include <random>
 #include <iomanip>
 #include <algorithm>
+#include <string>
 
 static int LocalRows(int rank, int size, int N)
 {
     int base = N / size;
-
     return base + (rank < N % size ? 1 : 0);
 }
 
 static int RowOffset(int rank, int size, int N)
 {
     int offset = 0;
-
     for (int r = 0; r < rank; ++r)
     {
         offset += LocalRows(r, size, N);
     }
-
     return offset;
 }
 
 static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
 {
     int rank, size;
-
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
 
@@ -43,17 +41,15 @@ static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
     if (rank == 0)
     {
         int offset = 0;
-
         for (int r = 0; r < size; ++r)
         {
             sendCounts[r] = LocalRows(r, size, N) * N;
             displs[r] = offset;
-
             offset += sendCounts[r];
         }
     }
 
-    MPI_Scatterv(rank == 0 ? matrix.Data() : nullptr, sendCounts.data(), displs.data(), MPI_DOUBLE, localData.data(), localRows * N, MPI_DOUBLE, 0,comm);
+    MPI_Scatterv(rank == 0 ? matrix.Data() : nullptr, sendCounts.data(), displs.data(), MPI_DOUBLE, localData.data(), localRows * N, MPI_DOUBLE, 0, comm);
 
     double detSign = 1.0;
     std::vector<double> pivotRow(N);
@@ -66,14 +62,9 @@ static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
         for (int i = 0; i < localRows; ++i)
         {
             int globalRow = rowOffset + i;
-
-            if (globalRow < k)
-            {
-                continue;
-            }
+            if (globalRow < k) continue;
 
             double value = std::abs(localData[static_cast<size_t>(i) * N + k]);
-
             if (value > localMax)
             {
                 localMax = value;
@@ -81,8 +72,7 @@ static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
             }
         }
 
-        struct
-        {
+        struct {
             double value;
             int index;
         } localPair, globalPair;
@@ -94,10 +84,7 @@ static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
 
         int pivotGlobalRow = globalPair.index;
 
-        if (std::abs(globalPair.value) < 1e-12)
-        {
-            return 0.0;
-        }
+        if (std::abs(globalPair.value) < 1e-12) return 0.0;
 
         int ownerPivot = 0;
         int ownerK = 0;
@@ -107,15 +94,8 @@ static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
             int start = RowOffset(r, size, N);
             int end = start + LocalRows(r, size, N);
 
-            if (pivotGlobalRow >= start && pivotGlobalRow < end)
-            {
-                ownerPivot = r;
-            }
-
-            if (k >= start && k < end)
-            {
-                ownerK = r;
-            }
+            if (pivotGlobalRow >= start && pivotGlobalRow < end) ownerPivot = r;
+            if (k >= start && k < end) ownerK = r;
         }
 
         if (pivotGlobalRow != k)
@@ -127,9 +107,7 @@ static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
                 if (rank == ownerPivot)
                 {
                     int localPivotRow = pivotGlobalRow - rowOffset;
-
                     int localKRow = k - rowOffset;
-
                     for (int col = 0; col < N; ++col)
                     {
                         std::swap(localData[static_cast<size_t>(localPivotRow) * N + col], localData[static_cast<size_t>(localKRow) * N + col]);
@@ -141,14 +119,12 @@ static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
                 if (rank == ownerPivot)
                 {
                     int localPivotRow = pivotGlobalRow - rowOffset;
-
                     MPI_Sendrecv_replace(&localData[static_cast<size_t>(localPivotRow) * N], N, MPI_DOUBLE, ownerK, 0, ownerK, 0, comm, MPI_STATUS_IGNORE);
                 }
 
                 if (rank == ownerK)
                 {
                     int localKRow = k - rowOffset;
-
                     MPI_Sendrecv_replace(&localData[static_cast<size_t>(localKRow) * N], N, MPI_DOUBLE, ownerPivot, 0, ownerPivot, 0, comm, MPI_STATUS_IGNORE);
                 }
             }
@@ -157,7 +133,6 @@ static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
         if (rank == ownerK)
         {
             int localKRow = k - rowOffset;
-
             std::copy(&localData[static_cast<size_t>(localKRow) * N], &localData[static_cast<size_t>(localKRow) * N + N], pivotRow.begin());
         }
 
@@ -168,14 +143,12 @@ static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
         for (int i = 0; i < localRows; ++i)
         {
             int globalRow = rowOffset + i;
-
-            if (globalRow <= k)
+            if (globalRow <= k) 
             {
                 continue;
             }
 
-            double factor = localData[ static_cast<size_t>(i) * N + k] / pivot;
-
+            double factor = localData[static_cast<size_t>(i) * N + k] / pivot;
             localData[static_cast<size_t>(i) * N + k] = 0.0;
 
             for (int col = k + 1; col < N; ++col)
@@ -186,19 +159,92 @@ static double ParallelDeterminantMPI(const Matrix& matrix, int N, MPI_Comm comm)
     }
 
     double localDet = 1.0;
-
     for (int i = 0; i < localRows; ++i)
     {
         int globalRow = rowOffset + i;
-
         localDet *= localData[static_cast<size_t>(i) * N + globalRow];
     }
 
     double globalDet = 1.0;
-
     MPI_Reduce(&localDet, &globalDet, 1, MPI_DOUBLE, MPI_PROD, 0, comm);
 
     return globalDet * detSign;
+}
+
+
+static double ParallelDeterminantOpenMP(const Matrix& matrix, int& outNumThreads)
+{
+    int n = matrix.Rows();
+    double determinant = 1.0;
+    Matrix temp = matrix;
+
+    int numThreads = 1;
+    bool isSingular = false;
+
+#pragma omp parallel
+    {
+#pragma omp single
+        numThreads = omp_get_num_threads();
+
+        for (int i = 0; i < n; ++i)
+        {
+#pragma omp single
+            {
+                int pivotRow = i;
+                double maxVal = std::abs(temp(i, i));
+
+                for (int row = i + 1; row < n; ++row)
+                {
+                    if (std::abs(temp(row, i)) > maxVal)
+                    {
+                        maxVal = std::abs(temp(row, i));
+                        pivotRow = row;
+                    }
+                }
+
+                if (maxVal < 1e-12)
+                {
+                    isSingular = true;
+                }
+                else
+                {
+                    if (pivotRow != i)
+                    {
+                        for (int col = i; col < n; ++col)
+                        {
+                            std::swap(temp(i, col), temp(pivotRow, col));
+                        }
+                        determinant *= -1.0;
+                    }
+
+                    determinant *= temp(i, i);
+                }
+            }
+
+            if (isSingular) 
+            {
+                break;
+            }
+
+#pragma omp for schedule(static)
+            for (int row = i + 1; row < n; ++row)
+            {
+                double factor = temp(row, i) / temp(i, i);
+                for (int col = i + 1; col < n; ++col)
+                {
+                    temp(row, col) -= factor * temp(i, col);
+                }
+            }
+        }
+    }
+
+    if (isSingular) 
+    {
+        return 0.0;
+    }
+
+    outNumThreads = numThreads;
+    return determinant;
 }
 
 int main(int argc, char** argv)
@@ -206,21 +252,17 @@ int main(int argc, char** argv)
     MPI_Init(&argc, &argv);
 
     int rank, size;
-
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    int N = 500;
-
+    int N = 1000;
     Matrix matrix;
 
     if (rank == 0)
     {
         matrix = Matrix(N, N);
-
         std::mt19937 gen(42);
-
-        std::uniform_real_distribution<double>dist(-2.0, 2.0);
+        std::uniform_real_distribution<double> dist(-2.0, 2.0);
 
         for (int i = 0; i < N; ++i)
         {
@@ -232,68 +274,65 @@ int main(int argc, char** argv)
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
-
-    double startParallel = MPI_Wtime();
-
-    double detParallel = ParallelDeterminantMPI(matrix, N, MPI_COMM_WORLD);
-
+    double startMPI = MPI_Wtime();
+    double detMPI = ParallelDeterminantMPI(matrix, N, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
-
-    double parallelTime = MPI_Wtime() - startParallel;
+    double timeMPI = MPI_Wtime() - startMPI;
 
     if (rank == 0)
     {
-        double startSequential = MPI_Wtime();
-        double detSequential = matrix.Determinant();
-        double sequentialTime = MPI_Wtime() - startSequential;
-        double speedup = sequentialTime / parallelTime;
-        double efficiency = speedup / size;
+        int ompThreads = 0;
+        double startOMP = omp_get_wtime();
+        double detOMP = ParallelDeterminantOpenMP(matrix, ompThreads);
+        double timeOMP = omp_get_wtime() - startOMP;
+
+        double startSeq = MPI_Wtime();
+        double detSeq = matrix.Determinant();
+        double timeSeq = MPI_Wtime() - startSeq;
+
+        double speedupMPI = timeSeq / timeMPI;
+        double efficiencyMPI = (speedupMPI / size) * 100.0;
+
+        double speedupOMP = timeSeq / timeOMP;
+        double efficiencyOMP = (speedupOMP / ompThreads) * 100.0;
 
         std::cout << std::scientific << std::setprecision(6);
+        std::cout << "\n=== EXECUTION ENVIRONMENT ===\n";
+        std::cout << "Matrix size (N) : " << N << "\n";
+        std::cout << "MPI processes   : " << size << "\n";
+        std::cout << "OpenMP threads  : " << ompThreads << "\n";
 
-        std::cout << "\n=== RESULTS ===\n";
+        std::cout << "\n=== COMPUTED DETERMINANTS ===\n";
+        std::cout << "Sequential      : " << detSeq << "\n";
+        std::cout << "MPI             : " << detMPI << "\n";
+        std::cout << "OpenMP          : " << detOMP << "\n";
 
-        std::cout
-            << "Matrix size (N): "
-            << N << "\n";
+        std::cout << std::fixed << std::setprecision(6);
+        std::cout << "\n=== PERFORMANCE METRICS ===\n";
+        std::cout << std::left << std::setw(15) << "Method"
+            << std::setw(15) << "Time (sec)"
+            << std::setw(15) << "Speedup (S)"
+            << std::setw(15) << "Efficiency (E)" << "\n";
+        std::cout << std::string(60, '-') << "\n";
 
-        std::cout
-            << "MPI processes  : "
-            << size << "\n\n";
+        std::cout << std::left << std::setw(15) << "Sequential"
+            << std::setw(15) << timeSeq
+            << std::setw(15) << "1.000000x"
+            << std::setw(15) << "100.00%" << "\n";
 
-        std::cout
-            << "Sequential determinant : "
-            << detSequential << "\n";
+        std::cout << std::left << std::setw(15) << "MPI"
+            << std::setw(15) << timeMPI
+            << std::to_string(speedupMPI) + "x\t"
+            << std::to_string(efficiencyMPI) + "%" << "\n";
 
-        std::cout
-            << "Parallel determinant   : "
-            << detParallel << "\n\n";
+        std::cout << std::left << std::setw(15) << "OpenMP"
+            << std::setw(15) << timeOMP
+            << std::to_string(speedupOMP) + "x\t"
+            << std::to_string(efficiencyOMP) + "%" << "\n";
 
-        std::cout
-            << std::fixed;
-
-        std::cout
-            << "Sequential time : "
-            << sequentialTime
-            << " sec\n";
-
-        std::cout
-            << "Parallel time   : "
-            << parallelTime
-            << " sec\n";
-
-        std::cout
-            << "Speedup (S)     : "
-            << speedup
-            << "x\n";
-
-        std::cout
-            << "Efficiency (E)  : "
-            << efficiency * 100.0
-            << "%\n";
+        std::cout << "\n";
     }
 
     MPI_Finalize();
-
     return 0;
 }
